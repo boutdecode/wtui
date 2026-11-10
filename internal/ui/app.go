@@ -31,6 +31,7 @@ type app struct {
 	prefix     bool
 	prefixKey  tcell.Key
 	prefixName string
+	command    []string // program started in every new pane; empty = $SHELL
 	renaming   bool
 	renameBuf  []rune
 	quit       bool
@@ -39,7 +40,7 @@ type app struct {
 }
 
 // Run starts the multiplexer; prefixSpec is e.g. "ctrl-a".
-func Run(prefixSpec string) error {
+func Run(prefixSpec string, command []string) error {
 	key, err := parsePrefix(prefixSpec)
 	if err != nil {
 		return err
@@ -57,6 +58,7 @@ func Run(prefixSpec string) error {
 		screen:     s,
 		prefixKey:  key,
 		prefixName: prefixSpec,
+		command:    command,
 		sess:       &window.Session{},
 		redraw:     make(chan struct{}, 1),
 		exited:     make(chan *pane.Pane, 16),
@@ -103,7 +105,7 @@ func Run(prefixSpec string) error {
 }
 
 func (a *app) newPane() (*pane.Pane, error) {
-	return pane.New(80, 24,
+	return pane.New(a.command, 80, 24,
 		func() {
 			select {
 			case a.redraw <- struct{}{}:

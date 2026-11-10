@@ -14,8 +14,13 @@ func main() {
 		def = "ctrl-a"
 	}
 	prefix := flag.String("prefix", def, "prefix key (ctrl-a, ctrl-b, ctrl-space, ctrl-\\)")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: wtui [--prefix KEY] [command [args...]]\n\n")
+		fmt.Fprintf(os.Stderr, "command is started in every new pane (default: $SHELL).\n\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
-	if err := ui.Run(*prefix); err != nil {
+	if err := ui.Run(*prefix, flag.Args()); err != nil {
 		fmt.Fprintln(os.Stderr, "wtui:", err)
 		os.Exit(1)
 	}

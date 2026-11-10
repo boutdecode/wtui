@@ -25,14 +25,18 @@ type Pane struct {
 	closed     bool
 }
 
-// New starts the user's shell. onOutput is called (from another goroutine)
+// New starts command (argv); an empty command starts the user's shell.
+// onOutput is called (from another goroutine)
 // whenever the screen changed; onExit when the shell terminated.
-func New(cols, rows int, onOutput func(), onExit func(*Pane)) (*Pane, error) {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
+func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) (*Pane, error) {
+	if len(command) == 0 {
+		shell := os.Getenv("SHELL")
+		if shell == "" {
+			shell = "/bin/sh"
+		}
+		command = []string{shell}
 	}
-	cmd := exec.Command(shell)
+	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
