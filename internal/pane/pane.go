@@ -1,4 +1,4 @@
-// Package pane runs a shell in a PTY and feeds its output to a VT emulator.
+// Package pane runs a program in a PTY and feeds its output to a VT emulator.
 package pane
 
 import (
@@ -6,13 +6,12 @@ import (
 	"os/exec"
 	"sync"
 
+	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
-	"github.com/hinshun/vt10x"
 )
 
-// Pane is one shell process with its emulated screen.
+// Pane is one process with its emulated screen.
 type Pane struct {
-	Term vt10x.Terminal
 	// Name is a user-chosen label; empty means use the terminal title.
 	// Only accessed from the UI goroutine.
 	Name string
@@ -20,14 +19,20 @@ type Pane struct {
 	ptmx *os.File
 	cmd  *exec.Cmd
 
+	// emuMu guards term and title: the emulator is not thread-safe.
+	emuMu sync.Mutex
+	term  *vt.Emulator
+	title string
+
 	mu         sync.Mutex
 	cols, rows int
 	closed     bool
+	rec        *os.File // raw PTY output, when WTUI_RECORD is set
 }
 
 // New starts command (argv); an empty command starts the user's shell.
-// onOutput is called (from another goroutine)
-// whenever the screen changed; onExit when the shell terminated.
+// onOutput is called (from another goroutine) whenever the screen changed;
+// onExit when the process terminated.
 func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) (*Pane, error) {
 	if len(command) == 0 {
 		shell := os.Getenv("SHELL")
@@ -37,24 +42,52 @@ func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) 
 		command = []string{shell}
 	}
 	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
 		return nil, err
 	}
 	p := &Pane{
-		Term: vt10x.New(vt10x.WithSize(cols, rows), vt10x.WithWriter(ptmx)),
+		term: vt.NewEmulator(cols, rows),
 		ptmx: ptmx,
 		cmd:  cmd,
 		cols: cols,
 		rows: rows,
 	}
+	p.term.SetCallbacks(vt.Callbacks{
+		// Called from term.Write, so emuMu is already held.
+		Title: func(t string) { p.title = t },
+	})
+	if path := os.Getenv("WTUI_RECORD"); path != "" {
+		p.rec, _ = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	}
+
+	// Answers from the emulator (device attributes, cursor position...)
+	// must be sent back to the program, or the emulator blocks on its pipe.
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := p.term.Read(buf)
+			if n > 0 {
+				ptmx.Write(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
-				p.Term.Write(buf[:n])
+				if p.rec != nil {
+					p.rec.Write(buf[:n])
+				}
+				p.emuMu.Lock()
+				p.term.Write(buf[:n])
+				p.emuMu.Unlock()
 				onOutput()
 			}
 			if err != nil {
@@ -66,14 +99,30 @@ func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) 
 	return p, nil
 }
 
-// Write sends input bytes to the shell.
+// Write sends input bytes to the program.
 func (p *Pane) Write(b []byte) {
 	if len(b) > 0 {
 		p.ptmx.Write(b)
 	}
 }
 
-// Resize updates the PTY and emulator size if it changed.
+// WithTerm runs f with exclusive access to the emulator.
+func (p *Pane) WithTerm(f func(t *vt.Emulator)) {
+	p.emuMu.Lock()
+	defer p.emuMu.Unlock()
+	f(p.term)
+}
+
+// Title returns the title set by the program (empty if none).
+func (p *Pane) Title() string {
+	p.emuMu.Lock()
+	defer p.emuMu.Unlock()
+	return p.title
+}
+
+// Resize updates the emulator and PTY size if it changed. The emulator is
+// resized first so that output produced in answer to SIGWINCH is parsed at
+// the new size.
 func (p *Pane) Resize(cols, rows int) {
 	if cols < 1 || rows < 1 {
 		return
@@ -84,11 +133,13 @@ func (p *Pane) Resize(cols, rows int) {
 		return
 	}
 	p.cols, p.rows = cols, rows
+	p.emuMu.Lock()
+	p.term.Resize(cols, rows)
+	p.emuMu.Unlock()
 	pty.Setsize(p.ptmx, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
-	p.Term.Resize(cols, rows)
 }
 
-// Close kills the shell and releases the PTY. Safe to call twice.
+// Close kills the process and releases the PTY. Safe to call twice.
 func (p *Pane) Close() {
 	p.mu.Lock()
 	if p.closed {
@@ -98,8 +149,12 @@ func (p *Pane) Close() {
 	p.closed = true
 	p.mu.Unlock()
 	p.ptmx.Close()
+	if p.rec != nil {
+		p.rec.Close()
+	}
 	if p.cmd.Process != nil {
 		p.cmd.Process.Kill()
 	}
 	go p.cmd.Wait()
+	p.term.Close() // unblocks the response goroutine
 }

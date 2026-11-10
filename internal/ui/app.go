@@ -3,24 +3,17 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/vt"
 	"github.com/gdamore/tcell/v2"
-	"github.com/hinshun/vt10x"
 
 	"window-tui/internal/layout"
 	"window-tui/internal/pane"
 	"window-tui/internal/window"
-)
-
-// vt10x attribute bits (unexported upstream).
-const (
-	attrReverse   = 1 << 0
-	attrUnderline = 1 << 1
-	attrBold      = 1 << 2
-	attrItalic    = 1 << 4
-	attrBlink     = 1 << 5
 )
 
 type app struct {
@@ -289,53 +282,64 @@ func (a *app) draw() {
 }
 
 func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect) (cx, cy int, vis bool) {
-	t := p.Term
-	t.Lock()
-	defer t.Unlock()
-	tc, tr := t.Size()
-	for y := 0; y < r.H && y < tr; y++ {
-		for x := 0; x < r.W && x < tc; x++ {
-			g := t.Cell(x, y)
-			ch := g.Char
-			if ch == 0 {
-				ch = ' '
+	p.WithTerm(func(t *vt.Emulator) {
+		tc, tr := t.Width(), t.Height()
+		for y := 0; y < r.H && y < tr; y++ {
+			for x := 0; x < r.W && x < tc; x++ {
+				c := t.CellAt(x, y)
+				if c == nil {
+					continue
+				}
+				if c.Width == 0 && c.Content == "" {
+					continue // right half of a wide character
+				}
+				rs := []rune(c.Content)
+				if len(rs) == 0 || (c.Width == 2 && x+1 >= r.W) {
+					rs = []rune{' '}
+				}
+				s.SetContent(r.X+x, r.Y+y, rs[0], rs[1:], cellStyle(c.Style.Fg, c.Style.Bg, c.Style.Attrs, c.Style.Underline != 0))
 			}
-			s.SetContent(r.X+x, r.Y+y, ch, nil, glyphStyle(g))
 		}
-	}
-	c := t.Cursor()
-	return r.X + c.X, r.Y + c.Y, t.CursorVisible() && c.X < r.W && c.Y < r.H
+		pos := t.CursorPosition()
+		cx, cy = r.X+pos.X, r.Y+pos.Y
+		vis = !t.CursorHidden() && pos.X < r.W && pos.Y < r.H
+	})
+	return cx, cy, vis
 }
 
-func glyphStyle(g vt10x.Glyph) tcell.Style {
-	st := tcell.StyleDefault.Foreground(color(g.FG)).Background(color(g.BG))
-	m := g.Mode
-	if m&attrBold != 0 {
-		st = st.Bold(true)
-	}
-	if m&attrUnderline != 0 {
-		st = st.Underline(true)
-	}
-	if m&attrItalic != 0 {
-		st = st.Italic(true)
-	}
-	if m&attrBlink != 0 {
-		st = st.Blink(true)
-	}
-	if m&attrReverse != 0 {
-		st = st.Reverse(true)
-	}
-	return st
+// Text attribute bits of ultraviolet's Style.Attrs.
+const (
+	attrBold          = 1 << 0
+	attrFaint         = 1 << 1
+	attrItalic        = 1 << 2
+	attrBlink         = 1 << 3
+	attrReverse       = 1 << 5
+	attrStrikethrough = 1 << 7
+)
+
+func cellStyle(fg, bg color.Color, attrs uint8, underline bool) tcell.Style {
+	st := tcell.StyleDefault.Foreground(toTcell(fg)).Background(toTcell(bg))
+	return st.
+		Bold(attrs&attrBold != 0).
+		Dim(attrs&attrFaint != 0).
+		Italic(attrs&attrItalic != 0).
+		Blink(attrs&attrBlink != 0).
+		Reverse(attrs&attrReverse != 0).
+		StrikeThrough(attrs&attrStrikethrough != 0).
+		Underline(underline)
 }
 
-func color(c vt10x.Color) tcell.Color {
-	switch {
-	case c < 256:
-		return tcell.PaletteColor(int(c))
-	case c >= 1<<24:
-		return tcell.ColorDefault // DefaultFG/BG/Cursor
+func toTcell(c color.Color) tcell.Color {
+	switch v := c.(type) {
+	case nil:
+		return tcell.ColorDefault
+	case ansi.BasicColor:
+		return tcell.PaletteColor(int(v))
+	case ansi.IndexedColor:
+		return tcell.PaletteColor(int(v))
 	default:
-		return tcell.NewHexColor(int32(c))
+		r, g, b, _ := c.RGBA()
+		return tcell.NewRGBColor(int32(r>>8), int32(g>>8), int32(b>>8))
 	}
 }
 
@@ -372,12 +376,8 @@ func title(w *window.Window) string {
 	if w.Active.Name != "" {
 		return w.Active.Name
 	}
-	t := w.Active.Term
-	t.Lock()
-	name := t.Title()
-	t.Unlock()
-	if name != "" {
-		return name
+	if t := w.Active.Title(); t != "" {
+		return t
 	}
 	return "sh"
 }
