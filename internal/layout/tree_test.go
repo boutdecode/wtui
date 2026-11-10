@@ -8,7 +8,7 @@ func TestSplitComputeNeighborRemove(t *testing.T) {
 	root.Split("b", "c", false) // b over c
 	rects := map[Item]Rect{}
 	var seps []Rect
-	root.Compute(Rect{0, 0, 81, 25}, rects, &seps)
+	root.Compute(Rect{0, 0, 81, 25}, 1, rects, &seps)
 	if rects["a"] != (Rect{0, 0, 40, 25}) {
 		t.Fatalf("a = %+v", rects["a"])
 	}
@@ -44,5 +44,23 @@ func TestAdjustClamps(t *testing.T) {
 	}
 	if root.Ratio > 0.9 {
 		t.Fatal(root.Ratio)
+	}
+}
+
+func TestComputeNoGap(t *testing.T) {
+	root := NewLeaf("a")
+	root.Split("a", "b", true)
+	root.Split("b", "c", false)
+	rects := map[Item]Rect{}
+	var seps []Rect
+	root.Compute(Rect{0, 0, 80, 24}, 0, rects, &seps)
+	if len(seps) != 0 {
+		t.Fatalf("seps = %v", seps)
+	}
+	if rects["a"] != (Rect{0, 0, 40, 24}) || rects["b"] != (Rect{40, 0, 40, 12}) || rects["c"] != (Rect{40, 12, 40, 12}) {
+		t.Fatalf("rects = %+v", rects)
+	}
+	if Neighbor(rects, "a", Right) == nil || Neighbor(rects, "c", Up) != "b" {
+		t.Fatal("neighbors must work when panes touch")
 	}
 }

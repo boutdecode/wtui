@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
@@ -13,6 +14,7 @@ import (
 
 	"window-tui/internal/layout"
 	"window-tui/internal/pane"
+	"window-tui/internal/sysstat"
 	"window-tui/internal/window"
 )
 
@@ -25,6 +27,8 @@ type app struct {
 	prefixKey  tcell.Key
 	prefixName string
 	command    []string // program started in every new pane; empty = $SHELL
+	stats      *sysstat.Stats
+	borders    bool
 	renaming   bool
 	renameBuf  []rune
 	quit       bool
@@ -33,7 +37,15 @@ type app struct {
 }
 
 // Run starts the multiplexer; prefixSpec is e.g. "ctrl-a".
-func Run(prefixSpec string, command []string) error {
+// Options configures Run.
+type Options struct {
+	Prefix  string   // prefix key, e.g. "ctrl-a"
+	Borders bool     // draw separator lines between panes (otherwise panes touch)
+	Command []string // program started in every pane; empty = $SHELL
+}
+
+func Run(opt Options) error {
+	prefixSpec, command := opt.Prefix, opt.Command
 	key, err := parsePrefix(prefixSpec)
 	if err != nil {
 		return err
@@ -52,10 +64,17 @@ func Run(prefixSpec string, command []string) error {
 		prefixKey:  key,
 		prefixName: prefixSpec,
 		command:    command,
+		borders:    opt.Borders,
 		sess:       &window.Session{},
 		redraw:     make(chan struct{}, 1),
 		exited:     make(chan *pane.Pane, 16),
 	}
+	a.stats = sysstat.Start(statsLen, time.Second, func() {
+		select {
+		case a.redraw <- struct{}{}:
+		default:
+		}
+	})
 	if err := a.newWindow(); err != nil {
 		return err
 	}
@@ -187,14 +206,6 @@ func (a *app) handleKey(ev *tcell.EventKey) {
 			a.split(false)
 		case r >= '0' && r <= '9':
 			a.sess.Select(int(r - '0'))
-		case r == 'o':
-			ps := w.Panes()
-			for i, p := range ps {
-				if p == w.Active {
-					w.Active = ps[(i+1)%len(ps)]
-					break
-				}
-			}
 		case r == 'd' || r == 'q':
 			a.quit = true
 		}
@@ -236,7 +247,11 @@ func (a *app) draw() {
 	}
 	a.rects = map[layout.Item]layout.Rect{}
 	a.seps = a.seps[:0]
-	w.Root.Compute(layout.Rect{X: 0, Y: 0, W: cols, H: rows - 2}, a.rects, &a.seps)
+	gap := 0
+	if a.borders {
+		gap = 1
+	}
+	w.Root.Compute(layout.Rect{X: 0, Y: 0, W: cols, H: rows - 2}, gap, a.rects, &a.seps)
 
 	active := a.rects[w.Active]
 	for pt, arms := range borderArms(a.seps) {
@@ -247,12 +262,14 @@ func (a *app) draw() {
 		}
 		s.SetContent(pt.x, pt.y, borderGlyph(arms, heavy), nil, st)
 	}
+	// Without separator lines, inactive panes are dimmed to show the focus.
+	dimInactive := !a.borders && len(a.rects) > 1
 
 	showCursor := false
 	for it, r := range a.rects {
 		p := it.(*pane.Pane)
 		p.Resize(r.W, r.H)
-		cx, cy, vis := drawPane(s, p, r)
+		cx, cy, vis := drawPane(s, p, r, dimInactive && p != w.Active)
 		if p == w.Active && vis {
 			s.ShowCursor(cx, cy)
 			showCursor = true
@@ -270,7 +287,7 @@ func (a *app) draw() {
 	s.Show()
 }
 
-func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect) (cx, cy int, vis bool) {
+func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect, dim bool) (cx, cy int, vis bool) {
 	p.WithTerm(func(t *vt.Emulator) {
 		tc, tr := t.Width(), t.Height()
 		for y := 0; y < r.H && y < tr; y++ {
@@ -286,7 +303,7 @@ func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect) (cx, cy int, vis bool
 				if len(rs) == 0 || (c.Width == 2 && x+1 >= r.W) {
 					rs = []rune{' '}
 				}
-				s.SetContent(r.X+x, r.Y+y, rs[0], rs[1:], cellStyle(c.Style.Fg, c.Style.Bg, c.Style.Attrs, c.Style.Underline != 0))
+				s.SetContent(r.X+x, r.Y+y, rs[0], rs[1:], cellStyle(c.Style.Fg, c.Style.Bg, c.Style.Attrs, c.Style.Underline != 0, dim))
 			}
 		}
 		pos := t.CursorPosition()
@@ -306,11 +323,11 @@ const (
 	attrStrikethrough = 1 << 7
 )
 
-func cellStyle(fg, bg color.Color, attrs uint8, underline bool) tcell.Style {
+func cellStyle(fg, bg color.Color, attrs uint8, underline, dim bool) tcell.Style {
 	st := tcell.StyleDefault.Foreground(toTcell(fg)).Background(toTcell(bg))
 	return st.
 		Bold(attrs&attrBold != 0).
-		Dim(attrs&attrFaint != 0).
+		Dim(dim || attrs&attrFaint != 0).
 		Italic(attrs&attrItalic != 0).
 		Blink(attrs&attrBlink != 0).
 		Reverse(attrs&attrReverse != 0).
@@ -375,10 +392,14 @@ func (a *app) drawHelp(y, cols int) {
 	for x := 0; x < cols; x++ {
 		a.screen.SetContent(x, y, ' ', nil, styleHelpBar)
 	}
+	limit := cols
+	if cols >= minColsForStats {
+		limit = cols - a.drawStats(y, cols)
+	}
 	x := 0
 	put := func(str string, st tcell.Style) {
 		for _, r := range str {
-			if x < cols {
+			if x < limit {
 				a.screen.SetContent(x, y, r, nil, st)
 			}
 			x++
@@ -388,7 +409,7 @@ func (a *app) drawHelp(y, cols int) {
 	items := [][2]string{
 		{"n", "new"}, {"c", "close"}, {"r", "rename"}, {"v", "split |"}, {"h", "split -"},
 		{"Ctrl+Shift+←↑→↓", "focus"}, {"prefix+Ctrl+←↑→↓", "resize"},
-		{"Tab/0-9", "window"}, {"o", "next pane"}, {"d", "quit"},
+		{"Tab/0-9", "window"}, {"d", "quit"},
 	}
 	for i, it := range items {
 		if i > 0 {
@@ -438,4 +459,66 @@ func (a *app) drawRename(y, cols int) {
 	put(string(a.renameBuf), styleHelpKey)
 	a.screen.ShowCursor(x, y)
 	put("   Enter=ok  Esc=cancel  empty=auto title", styleHelpSep)
+}
+
+const (
+	statsLen        = 10 // samples shown in each sparkline
+	minColsForStats = 90 // hide the CPU/RAM graphs on narrower screens
+)
+
+var sparkBlocks = []rune("▁▂▃▄▅▆▇█")
+
+// sparkline renders values (0-100) as block characters, right-aligned in n cells.
+func sparkline(vals []float64, n int) string {
+	out := make([]rune, n)
+	for i := range out {
+		out[i] = ' '
+	}
+	off := n - len(vals)
+	for i, v := range vals {
+		eighths := int(v/100*8 + 0.5) // height in 1/8 of a cell; 0 stays blank
+		if eighths > 8 {
+			eighths = 8
+		}
+		if eighths > 0 && off+i >= 0 {
+			out[off+i] = sparkBlocks[eighths-1]
+		}
+	}
+	return string(out)
+}
+
+// drawStats draws "CPU ▂▃▅ 42%  RAM ▅▅▆ 63%" at the right of row y and
+// returns the width it used (including a one-cell gap on its left).
+func (a *app) drawStats(y, cols int) int {
+	cpu, mem := a.stats.Snapshot()
+	last := func(v []float64) float64 {
+		if len(v) == 0 {
+			return 0
+		}
+		return v[len(v)-1]
+	}
+	type seg struct {
+		text string
+		st   tcell.Style
+	}
+	segs := []seg{
+		{" CPU ", styleHelpBar},
+		{sparkline(cpu, statsLen), styleSparkCPU},
+		{fmt.Sprintf(" %3.0f%%", last(cpu)), styleHelpKey},
+		{"  RAM ", styleHelpBar},
+		{sparkline(mem, statsLen), styleSparkMem},
+		{fmt.Sprintf(" %3.0f%% ", last(mem)), styleHelpKey},
+	}
+	w := 0
+	for _, sg := range segs {
+		w += len([]rune(sg.text))
+	}
+	x := cols - w
+	for _, sg := range segs {
+		for _, r := range sg.text {
+			a.screen.SetContent(x, y, r, nil, sg.st)
+			x++
+		}
+	}
+	return w + 1
 }

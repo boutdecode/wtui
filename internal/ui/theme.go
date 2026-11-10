@@ -25,6 +25,9 @@ var (
 	styleHelpKey = tcell.StyleDefault.Background(colPepper).Foreground(colFuchsia).Bold(true)
 	styleHelpSep = tcell.StyleDefault.Background(colPepper).Foreground(colCharcoal)
 
+	styleSparkCPU = tcell.StyleDefault.Background(colCharcoal).Foreground(colFuchsia)
+	styleSparkMem = tcell.StyleDefault.Background(colCharcoal).Foreground(colJulep)
+
 	styleBorder       = tcell.StyleDefault.Foreground(colOyster)
 	styleBorderActive = tcell.StyleDefault.Foreground(colCharple).Bold(true)
 )

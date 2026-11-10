@@ -92,26 +92,28 @@ func (n *Node) Adjust(it Item, vert bool, delta float64) {
 	}
 }
 
-// Compute assigns a rectangle to every leaf and collects separator lines.
-func (n *Node) Compute(r Rect, out map[Item]Rect, seps *[]Rect) {
+// Compute assigns a rectangle to every leaf. gap is the width of the
+// separator between siblings (0 = panes touch, 1 = one separator cell);
+// separator lines are collected in seps when gap is 1.
+func (n *Node) Compute(r Rect, gap int, out map[Item]Rect, seps *[]Rect) {
 	if n.IsLeaf() {
 		out[n.Item] = r
 		return
 	}
 	if n.Vert {
-		wa := clamp(int(float64(r.W-1)*n.Ratio), 1, r.W-2)
-		n.A.Compute(Rect{r.X, r.Y, wa, r.H}, out, seps)
-		if seps != nil {
+		wa := clamp(int(float64(r.W-gap)*n.Ratio), 1, r.W-gap-1)
+		n.A.Compute(Rect{r.X, r.Y, wa, r.H}, gap, out, seps)
+		if gap > 0 && seps != nil {
 			*seps = append(*seps, Rect{r.X + wa, r.Y, 1, r.H})
 		}
-		n.B.Compute(Rect{r.X + wa + 1, r.Y, r.W - wa - 1, r.H}, out, seps)
+		n.B.Compute(Rect{r.X + wa + gap, r.Y, r.W - wa - gap, r.H}, gap, out, seps)
 	} else {
-		ha := clamp(int(float64(r.H-1)*n.Ratio), 1, r.H-2)
-		n.A.Compute(Rect{r.X, r.Y, r.W, ha}, out, seps)
-		if seps != nil {
+		ha := clamp(int(float64(r.H-gap)*n.Ratio), 1, r.H-gap-1)
+		n.A.Compute(Rect{r.X, r.Y, r.W, ha}, gap, out, seps)
+		if gap > 0 && seps != nil {
 			*seps = append(*seps, Rect{r.X, r.Y + ha, r.W, 1})
 		}
-		n.B.Compute(Rect{r.X, r.Y + ha + 1, r.W, r.H - ha - 1}, out, seps)
+		n.B.Compute(Rect{r.X, r.Y + ha + gap, r.W, r.H - ha - gap}, gap, out, seps)
 	}
 }
 

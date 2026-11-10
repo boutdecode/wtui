@@ -33,3 +33,9 @@ func TestOnRingIncludesCorners(t *testing.T) {
 		t.Error("inside/outside cells must not be on ring")
 	}
 }
+
+func TestSparkline(t *testing.T) {
+	if got := sparkline([]float64{0, 50, 100}, 5); got != "   ▄█" {
+		t.Fatalf("sparkline = %q", got)
+	}
+}
