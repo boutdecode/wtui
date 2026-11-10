@@ -23,15 +23,16 @@ const (
 )
 
 type app struct {
-	screen    tcell.Screen
-	sess      *window.Session
-	redraw    chan struct{}
-	exited    chan *pane.Pane
-	prefix    bool
-	prefixKey tcell.Key
-	quit      bool
-	rects     map[layout.Item]layout.Rect
-	seps      []layout.Rect
+	screen     tcell.Screen
+	sess       *window.Session
+	redraw     chan struct{}
+	exited     chan *pane.Pane
+	prefix     bool
+	prefixKey  tcell.Key
+	prefixName string
+	quit       bool
+	rects      map[layout.Item]layout.Rect
+	seps       []layout.Rect
 }
 
 // Run starts the multiplexer; prefixSpec is e.g. "ctrl-a".
@@ -50,11 +51,12 @@ func Run(prefixSpec string) error {
 	defer s.Fini()
 
 	a := &app{
-		screen:    s,
-		prefixKey: key,
-		sess:      &window.Session{},
-		redraw:    make(chan struct{}, 1),
-		exited:    make(chan *pane.Pane, 16),
+		screen:     s,
+		prefixKey:  key,
+		prefixName: prefixSpec,
+		sess:       &window.Session{},
+		redraw:     make(chan struct{}, 1),
+		exited:     make(chan *pane.Pane, 16),
 	}
 	if err := a.newWindow(); err != nil {
 		return err
@@ -147,6 +149,13 @@ func (a *app) handleKey(ev *tcell.EventKey) {
 			a.prefix = true
 			return
 		}
+		if ev.Modifiers() == tcell.ModCtrl|tcell.ModShift {
+			switch ev.Key() {
+			case tcell.KeyLeft, tcell.KeyRight, tcell.KeyUp, tcell.KeyDown:
+				a.arrow(w, ev.Key(), false) // Ctrl+Shift+arrow: focus, no prefix
+				return
+			}
+		}
 		w.Active.Write(encodeKey(ev))
 		return
 	}
@@ -157,24 +166,22 @@ func (a *app) handleKey(ev *tcell.EventKey) {
 		w.Active.Write([]byte{byte(a.prefixKey)})
 	case tcell.KeyLeft, tcell.KeyRight, tcell.KeyUp, tcell.KeyDown:
 		a.arrow(w, ev.Key(), ctrl)
+	case tcell.KeyTab:
+		a.sess.Next(1)
+	case tcell.KeyBacktab:
+		a.sess.Next(-1)
 	case tcell.KeyRune:
 		switch r := ev.Rune(); {
-		case r == 'c':
-			a.newWindow()
 		case r == 'n':
-			a.sess.Next(1)
-		case r == 'p':
-			a.sess.Next(-1)
+			a.newWindow()
+		case r == 'c':
+			a.sess.ClosePane(w.Active)
+		case r == 'v':
+			a.split(true)
+		case r == 'h':
+			a.split(false)
 		case r >= '0' && r <= '9':
 			a.sess.Select(int(r - '0'))
-		case r == '"':
-			a.split(false)
-		case r == '%':
-			a.split(true)
-		case r == 'x':
-			a.sess.ClosePane(w.Active)
-		case r == '&':
-			a.sess.RemoveWindow(a.sess.Cur)
 		case r == 'o':
 			ps := w.Panes()
 			for i, p := range ps {
@@ -218,13 +225,13 @@ func (a *app) draw() {
 	s.Clear()
 	cols, rows := s.Size()
 	w := a.sess.Current()
-	if w == nil || rows < 2 {
+	if w == nil || rows < 3 {
 		s.Show()
 		return
 	}
 	a.rects = map[layout.Item]layout.Rect{}
 	a.seps = a.seps[:0]
-	w.Root.Compute(layout.Rect{X: 0, Y: 0, W: cols, H: rows - 1}, a.rects, &a.seps)
+	w.Root.Compute(layout.Rect{X: 0, Y: 0, W: cols, H: rows - 2}, a.rects, &a.seps)
 
 	sepStyle := tcell.StyleDefault.Foreground(tcell.ColorGray)
 	activeStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen).Bold(true)
@@ -258,7 +265,8 @@ func (a *app) draw() {
 	if !showCursor {
 		s.HideCursor()
 	}
-	a.drawStatus(rows-1, cols)
+	a.drawStatus(rows-2, cols)
+	a.drawHelp(rows-1, cols)
 	s.Show()
 }
 
@@ -358,4 +366,20 @@ func adjacent(r layout.Rect, x, y int) bool {
 	inX := x >= r.X && x < r.X+r.W
 	inY := y >= r.Y && y < r.Y+r.H
 	return (inX && (y == r.Y-1 || y == r.Y+r.H)) || (inY && (x == r.X-1 || x == r.X+r.W))
+}
+
+func (a *app) drawHelp(y, cols int) {
+	st := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorSilver)
+	for x := 0; x < cols; x++ {
+		a.screen.SetContent(x, y, ' ', nil, st)
+	}
+	text := fmt.Sprintf(" %s, puis :  n=new  c=close  v=split|  h=split-  Ctrl+Shift+arrows=focus  (prefix)Ctrl+arrows=resize  Tab/Shift+Tab/0-9=window  o=next pane  d=quit", a.prefixName)
+	x := 0
+	for _, r := range text {
+		if x >= cols {
+			break
+		}
+		a.screen.SetContent(x, y, r, nil, st)
+		x++
+	}
 }
