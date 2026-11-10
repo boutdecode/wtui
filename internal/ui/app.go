@@ -227,6 +227,8 @@ func (a *app) draw() {
 	w.Root.Compute(layout.Rect{X: 0, Y: 0, W: cols, H: rows - 1}, a.rects, &a.seps)
 
 	sepStyle := tcell.StyleDefault.Foreground(tcell.ColorGray)
+	activeStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen).Bold(true)
+	active := a.rects[w.Active]
 	for _, sp := range a.seps {
 		for y := sp.Y; y < sp.Y+sp.H; y++ {
 			for x := sp.X; x < sp.X+sp.W; x++ {
@@ -234,7 +236,11 @@ func (a *app) draw() {
 				if sp.H == 1 {
 					ch = '─'
 				}
-				s.SetContent(x, y, ch, nil, sepStyle)
+				st := sepStyle
+				if adjacent(active, x, y) {
+					st = activeStyle
+				}
+				s.SetContent(x, y, ch, nil, st)
 			}
 		}
 	}
@@ -345,4 +351,11 @@ func title(w *window.Window) string {
 		return name
 	}
 	return "sh"
+}
+
+// adjacent reports whether cell (x, y) lies on the border directly around r.
+func adjacent(r layout.Rect, x, y int) bool {
+	inX := x >= r.X && x < r.X+r.W
+	inY := y >= r.Y && y < r.Y+r.H
+	return (inX && (y == r.Y-1 || y == r.Y+r.H)) || (inY && (x == r.X-1 || x == r.X+r.W))
 }
