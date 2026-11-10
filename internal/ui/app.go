@@ -4,6 +4,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/hinshun/vt10x"
@@ -30,6 +31,8 @@ type app struct {
 	prefix     bool
 	prefixKey  tcell.Key
 	prefixName string
+	renaming   bool
+	renameBuf  []rune
 	quit       bool
 	rects      map[layout.Item]layout.Rect
 	seps       []layout.Rect
@@ -144,6 +147,10 @@ func (a *app) handleKey(ev *tcell.EventKey) {
 	if w == nil {
 		return
 	}
+	if a.renaming {
+		a.handleRenameKey(ev, w)
+		return
+	}
 	if !a.prefix {
 		if ev.Key() == a.prefixKey {
 			a.prefix = true
@@ -176,6 +183,9 @@ func (a *app) handleKey(ev *tcell.EventKey) {
 			a.newWindow()
 		case r == 'c':
 			a.sess.ClosePane(w.Active)
+		case r == 'r':
+			a.renaming = true
+			a.renameBuf = []rune(w.Active.Name)
 		case r == 'v':
 			a.split(true)
 		case r == 'h':
@@ -233,19 +243,21 @@ func (a *app) draw() {
 	a.seps = a.seps[:0]
 	w.Root.Compute(layout.Rect{X: 0, Y: 0, W: cols, H: rows - 2}, a.rects, &a.seps)
 
-	sepStyle := tcell.StyleDefault.Foreground(tcell.ColorGray)
-	activeStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen).Bold(true)
 	active := a.rects[w.Active]
 	for _, sp := range a.seps {
 		for y := sp.Y; y < sp.Y+sp.H; y++ {
 			for x := sp.X; x < sp.X+sp.W; x++ {
-				ch := '│'
+				ch, st := '│', styleBorder
 				if sp.H == 1 {
 					ch = '─'
 				}
-				st := sepStyle
 				if adjacent(active, x, y) {
-					st = activeStyle
+					st = styleBorderActive
+					if sp.H == 1 {
+						ch = '━'
+					} else {
+						ch = '┃'
+					}
 				}
 				s.SetContent(x, y, ch, nil, st)
 			}
@@ -266,7 +278,11 @@ func (a *app) draw() {
 		s.HideCursor()
 	}
 	a.drawStatus(rows-2, cols)
-	a.drawHelp(rows-1, cols)
+	if a.renaming {
+		a.drawRename(rows-1, cols)
+	} else {
+		a.drawHelp(rows-1, cols)
+	}
 	s.Show()
 }
 
@@ -322,35 +338,38 @@ func color(c vt10x.Color) tcell.Color {
 }
 
 func (a *app) drawStatus(y, cols int) {
-	bar := tcell.StyleDefault.Background(tcell.ColorGreen).Foreground(tcell.ColorBlack)
 	for x := 0; x < cols; x++ {
-		a.screen.SetContent(x, y, ' ', nil, bar)
+		a.screen.SetContent(x, y, ' ', nil, styleBar)
 	}
-	x := 1
+	x := 0
 	put := func(str string, st tcell.Style) {
 		for _, r := range str {
-			a.screen.SetContent(x, y, r, nil, st)
+			if x < cols {
+				a.screen.SetContent(x, y, r, nil, st)
+			}
 			x++
 		}
 	}
 	host, _ := os.Hostname()
-	put("["+host+"] ", bar.Bold(true))
+	put(" "+host+" ", styleHost)
+	put(" ", styleBar)
 	for i, w := range a.sess.Windows {
-		flag := " "
-		st := bar
 		if i == a.sess.Cur {
-			flag = "*"
-			st = bar.Reverse(true)
+			put(fmt.Sprintf(" %d %s ", i, title(w)), styleTabActive)
+		} else {
+			put(fmt.Sprintf(" %d %s ", i, title(w)), styleTab)
 		}
-		put(fmt.Sprintf("%d:%s%s", i, title(w), flag), st)
-		put(" ", bar)
 	}
 	if a.prefix {
-		put(" [prefix]", bar.Bold(true))
+		put(" ", styleBar)
+		put(" PREFIX ", stylePrefix)
 	}
 }
 
 func title(w *window.Window) string {
+	if w.Active.Name != "" {
+		return w.Active.Name
+	}
 	t := w.Active.Term
 	t.Lock()
 	name := t.Title()
@@ -369,17 +388,70 @@ func adjacent(r layout.Rect, x, y int) bool {
 }
 
 func (a *app) drawHelp(y, cols int) {
-	st := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorSilver)
 	for x := 0; x < cols; x++ {
-		a.screen.SetContent(x, y, ' ', nil, st)
+		a.screen.SetContent(x, y, ' ', nil, styleHelpBar)
 	}
-	text := fmt.Sprintf(" %s, puis :  n=new  c=close  v=split|  h=split-  Ctrl+Shift+arrows=focus  (prefix)Ctrl+arrows=resize  Tab/Shift+Tab/0-9=window  o=next pane  d=quit", a.prefixName)
 	x := 0
-	for _, r := range text {
-		if x >= cols {
-			break
+	put := func(str string, st tcell.Style) {
+		for _, r := range str {
+			if x < cols {
+				a.screen.SetContent(x, y, r, nil, st)
+			}
+			x++
 		}
-		a.screen.SetContent(x, y, r, nil, st)
-		x++
 	}
+	put(" "+a.prefixName+" ", stylePrefix)
+	items := [][2]string{
+		{"n", "new"}, {"c", "close"}, {"r", "rename"}, {"v", "split |"}, {"h", "split -"},
+		{"Ctrl+Shift+←↑→↓", "focus"}, {"prefix+Ctrl+←↑→↓", "resize"},
+		{"Tab/0-9", "window"}, {"o", "next pane"}, {"d", "quit"},
+	}
+	for i, it := range items {
+		if i > 0 {
+			put("  •", styleHelpSep)
+		}
+		put("  ", styleHelpBar)
+		put(it[0], styleHelpKey)
+		put(" "+it[1], styleHelpBar)
+	}
+}
+
+func (a *app) handleRenameKey(ev *tcell.EventKey, w *window.Window) {
+	switch ev.Key() {
+	case tcell.KeyEnter:
+		w.Active.Name = strings.TrimSpace(string(a.renameBuf))
+		a.renaming = false
+	case tcell.KeyEsc, tcell.KeyCtrlC:
+		a.renaming = false
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if n := len(a.renameBuf); n > 0 {
+			a.renameBuf = a.renameBuf[:n-1]
+		}
+	case tcell.KeyCtrlU:
+		a.renameBuf = nil
+	case tcell.KeyRune:
+		if len(a.renameBuf) < 40 {
+			a.renameBuf = append(a.renameBuf, ev.Rune())
+		}
+	}
+}
+
+func (a *app) drawRename(y, cols int) {
+	for x := 0; x < cols; x++ {
+		a.screen.SetContent(x, y, ' ', nil, styleHelpBar)
+	}
+	x := 0
+	put := func(str string, st tcell.Style) {
+		for _, r := range str {
+			if x < cols {
+				a.screen.SetContent(x, y, r, nil, st)
+			}
+			x++
+		}
+	}
+	put(" RENAME ", stylePrefix)
+	put(" ", styleHelpBar)
+	put(string(a.renameBuf), styleHelpKey)
+	a.screen.ShowCursor(x, y)
+	put("   Enter=ok  Esc=cancel  empty=auto title", styleHelpSep)
 }

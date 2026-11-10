@@ -13,6 +13,9 @@ import (
 // Pane is one shell process with its emulated screen.
 type Pane struct {
 	Term vt10x.Terminal
+	// Name is a user-chosen label; empty means use the terminal title.
+	// Only accessed from the UI goroutine.
+	Name string
 
 	ptmx *os.File
 	cmd  *exec.Cmd
