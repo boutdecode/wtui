@@ -182,11 +182,16 @@ func (a *app) handleKey(ev *tcell.EventKey) {
 	}
 	a.prefix = false
 	ctrl := ev.Modifiers()&tcell.ModCtrl != 0
+	shift := ev.Modifiers()&tcell.ModShift != 0
 	switch ev.Key() {
 	case a.prefixKey:
 		w.Active.Write([]byte{byte(a.prefixKey)})
 	case tcell.KeyLeft, tcell.KeyRight, tcell.KeyUp, tcell.KeyDown:
-		a.arrow(w, ev.Key(), ctrl)
+		if shift && !ctrl {
+			a.move(w, ev.Key()) // prefix+Shift+arrow: swap pane with neighbour
+		} else {
+			a.arrow(w, ev.Key(), ctrl)
+		}
 	case tcell.KeyTab:
 		a.sess.Next(1)
 	case tcell.KeyBacktab:
@@ -227,13 +232,23 @@ func (a *app) arrow(w *window.Window, k tcell.Key, resize bool) {
 		}
 		return
 	}
-	d := map[tcell.Key]layout.Dir{
+	if n := layout.Neighbor(a.rects, w.Active, keyDir(k)); n != nil {
+		w.Active = n.(*pane.Pane)
+	}
+}
+
+// move swaps the active pane with its neighbour; focus stays on the active pane.
+func (a *app) move(w *window.Window, k tcell.Key) {
+	if n := layout.Neighbor(a.rects, w.Active, keyDir(k)); n != nil {
+		w.Root.Swap(w.Active, n)
+	}
+}
+
+func keyDir(k tcell.Key) layout.Dir {
+	return map[tcell.Key]layout.Dir{
 		tcell.KeyLeft: layout.Left, tcell.KeyRight: layout.Right,
 		tcell.KeyUp: layout.Up, tcell.KeyDown: layout.Down,
 	}[k]
-	if n := layout.Neighbor(a.rects, w.Active, d); n != nil {
-		w.Active = n.(*pane.Pane)
-	}
 }
 
 func (a *app) draw() {
@@ -408,7 +423,7 @@ func (a *app) drawHelp(y, cols int) {
 	put(" "+a.prefixName+" ", stylePrefix)
 	items := [][2]string{
 		{"n", "new"}, {"c", "close"}, {"r", "rename"}, {"v", "split |"}, {"h", "split -"},
-		{"Ctrl+Shift+←↑→↓", "focus"}, {"prefix+Ctrl+←↑→↓", "resize"},
+		{"Ctrl+Shift+←↑→↓", "focus"}, {"prefix+Shift+←↑→↓", "move"}, {"prefix+Ctrl+←↑→↓", "resize"},
 		{"Tab/0-9", "window"}, {"d", "quit"},
 	}
 	for i, it := range items {

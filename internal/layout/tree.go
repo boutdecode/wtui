@@ -134,32 +134,56 @@ const (
 	Down
 )
 
-// Neighbor returns the item adjacent to from in direction d, or nil.
+// Swap exchanges the items held by the leaves of a and b. Splits keep their
+// orientation and ratio, so the panes simply trade slots.
+func (n *Node) Swap(a, b Item) bool {
+	if a == b {
+		return false
+	}
+	la, lb := n.Find(a), n.Find(b)
+	if la == nil || lb == nil {
+		return false
+	}
+	la.Item, lb.Item = lb.Item, la.Item
+	return true
+}
+
+// span returns the length of the overlap of [a0,a0+al) and [b0,b0+bl).
+func span(a0, al, b0, bl int) int {
+	lo, hi := max(a0, b0), min(a0+al, b0+bl)
+	return hi - lo
+}
+
+// Neighbor returns the item adjacent to from in direction d, or nil. When
+// several items are equally close, the one sharing the longest edge wins.
 func Neighbor(rects map[Item]Rect, from Item, d Dir) Item {
 	a, ok := rects[from]
 	if !ok {
 		return nil
 	}
 	var best Item
-	bestDist := 1 << 30
+	bestDist, bestOv := 1<<30, 0
 	for it, c := range rects {
 		if it == from {
 			continue
 		}
-		var dist int
-		var overlap bool
+		var dist, ov int
+		var beyond bool
 		switch d {
 		case Left:
-			dist, overlap = a.X-(c.X+c.W), c.X+c.W <= a.X && c.Y < a.Y+a.H && a.Y < c.Y+c.H
+			dist, beyond, ov = a.X-(c.X+c.W), c.X+c.W <= a.X, span(a.Y, a.H, c.Y, c.H)
 		case Right:
-			dist, overlap = c.X-(a.X+a.W), c.X >= a.X+a.W && c.Y < a.Y+a.H && a.Y < c.Y+c.H
+			dist, beyond, ov = c.X-(a.X+a.W), c.X >= a.X+a.W, span(a.Y, a.H, c.Y, c.H)
 		case Up:
-			dist, overlap = a.Y-(c.Y+c.H), c.Y+c.H <= a.Y && c.X < a.X+a.W && a.X < c.X+c.W
+			dist, beyond, ov = a.Y-(c.Y+c.H), c.Y+c.H <= a.Y, span(a.X, a.W, c.X, c.W)
 		case Down:
-			dist, overlap = c.Y-(a.Y+a.H), c.Y >= a.Y+a.H && c.X < a.X+a.W && a.X < c.X+c.W
+			dist, beyond, ov = c.Y-(a.Y+a.H), c.Y >= a.Y+a.H, span(a.X, a.W, c.X, c.W)
 		}
-		if overlap && dist < bestDist {
-			best, bestDist = it, dist
+		if !beyond || ov <= 0 {
+			continue
+		}
+		if dist < bestDist || (dist == bestDist && ov > bestOv) {
+			best, bestDist, bestOv = it, dist, ov
 		}
 	}
 	return best

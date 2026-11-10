@@ -64,3 +64,38 @@ func TestComputeNoGap(t *testing.T) {
 		t.Fatal("neighbors must work when panes touch")
 	}
 }
+
+func TestSwap(t *testing.T) {
+	root := NewLeaf("a")
+	root.Split("a", "b", true) // a | b
+	root.Ratio = 0.3
+	if root.Swap("a", "a") || root.Swap("a", "x") {
+		t.Fatal("swap with self/unknown must fail")
+	}
+	if !root.Swap("a", "b") {
+		t.Fatal("swap failed")
+	}
+	rects := map[Item]Rect{}
+	var seps []Rect
+	root.Compute(Rect{0, 0, 81, 25}, 1, rects, &seps)
+	if rects["b"].X != 0 || rects["a"].X <= rects["b"].X || root.Ratio != 0.3 {
+		t.Fatalf("rects = %+v ratio = %v", rects, root.Ratio)
+	}
+	if rects["b"].W >= rects["a"].W {
+		t.Fatalf("ratio must stay with the slot: %+v", rects)
+	}
+}
+
+func TestNeighborPrefersLongestEdge(t *testing.T) {
+	// a is tall on the left; b (short) and c (tall) both sit at the same distance on the right.
+	rects := map[Item]Rect{
+		"a": {0, 0, 10, 20},
+		"b": {11, 0, 10, 3},
+		"c": {11, 3, 10, 17},
+	}
+	for i := 0; i < 50; i++ {
+		if n := Neighbor(rects, "a", Right); n != "c" {
+			t.Fatalf("got %v, want c", n)
+		}
+	}
+}
