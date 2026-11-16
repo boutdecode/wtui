@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"sync"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 )
@@ -23,6 +24,10 @@ type Pane struct {
 	emuMu sync.Mutex
 	term  *vt.Emulator
 	title string
+	// mouse holds the mouse-tracking modes the program enabled.
+	mouse map[ansi.Mode]bool
+	// scroll is how many lines the view is scrolled back into the history.
+	scroll int
 
 	mu         sync.Mutex
 	cols, rows int
@@ -48,15 +53,22 @@ func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) 
 		return nil, err
 	}
 	p := &Pane{
-		term: vt.NewEmulator(cols, rows),
-		ptmx: ptmx,
-		cmd:  cmd,
-		cols: cols,
-		rows: rows,
+		term:  vt.NewEmulator(cols, rows),
+		mouse: map[ansi.Mode]bool{},
+		ptmx:  ptmx,
+		cmd:   cmd,
+		cols:  cols,
+		rows:  rows,
 	}
 	p.term.SetCallbacks(vt.Callbacks{
 		// Called from term.Write, so emuMu is already held.
 		Title: func(t string) { p.title = t },
+		EnableMode: func(m ansi.Mode) {
+			if isMouseMode(m) {
+				p.mouse[m] = true
+			}
+		},
+		DisableMode: func(m ansi.Mode) { delete(p.mouse, m) },
 	})
 	if path := os.Getenv("WTUI_RECORD"); path != "" {
 		p.rec, _ = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -102,6 +114,9 @@ func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) 
 // Write sends input bytes to the program.
 func (p *Pane) Write(b []byte) {
 	if len(b) > 0 {
+		p.emuMu.Lock()
+		p.scroll = 0 // typing brings the view back to the bottom
+		p.emuMu.Unlock()
 		p.ptmx.Write(b)
 	}
 }

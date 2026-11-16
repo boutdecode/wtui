@@ -29,6 +29,11 @@ type app struct {
 	command    []string // program started in every new pane; empty = $SHELL
 	stats      *sysstat.Stats
 	borders    bool
+	buttons    tcell.ButtonMask // buttons held after the previous mouse event
+	mousePane  *pane.Pane       // pane that received the current press
+	sel        *pane.Selection  // text selection, in selPane view coordinates
+	selPane    *pane.Pane
+	selecting  bool // a left-drag selection is in progress
 	renaming   bool
 	renameBuf  []rune
 	quit       bool
@@ -58,6 +63,7 @@ func Run(opt Options) error {
 		return err
 	}
 	defer s.Fini()
+	s.EnableMouse()
 
 	a := &app{
 		screen:     s,
@@ -153,10 +159,112 @@ func (a *app) handleEvent(ev tcell.Event) {
 		a.screen.Sync()
 	case *tcell.EventKey:
 		a.handleKey(ev)
+	case *tcell.EventMouse:
+		a.handleMouse(ev)
 	}
 }
 
+// handleMouse routes mouse events: the wheel acts on the pane under the
+// pointer; a left press also focuses it; presses, drags and releases are
+// forwarded to programs that track the mouse (a drag stays with the pane where
+// the press happened).
+func (a *app) handleMouse(ev *tcell.EventMouse) {
+	x, y := ev.Position()
+	if b := ev.Buttons(); b&(tcell.WheelUp|tcell.WheelDown) != 0 {
+		a.sel = nil
+		if it := paneAt(a.rects, x, y); it != nil {
+			r := a.rects[it]
+			it.(*pane.Pane).Wheel(x-r.X, y-r.Y, b&tcell.WheelUp != 0)
+		}
+		return
+	}
+	cur := ev.Buttons() &^ wheelMask
+	kind, btn := mouseTransition(a.buttons, cur)
+	a.buttons = cur
+	w := a.sess.Current()
+	if w == nil {
+		return
+	}
+
+	var target *pane.Pane
+	switch kind {
+	case mouseDrag, mouseRelease:
+		target = a.mousePane // may be nil if the press was outside any pane
+	default:
+		if it := paneAt(a.rects, x, y); it != nil {
+			target = it.(*pane.Pane)
+		}
+	}
+	if kind == mousePress {
+		a.mousePane = target
+		a.sel, a.selecting = nil, false
+		if btn == tcell.Button1 && target != nil {
+			w.Active = target
+			// Select text unless the program tracks the mouse (Shift forces it).
+			a.selecting = !target.MouseTracking() || ev.Modifiers()&tcell.ModShift != 0
+		}
+	}
+	if target == nil {
+		return
+	}
+	if r, ok := a.rects[target]; ok {
+		lx, ly := localPos(r, x, y)
+		if a.selecting && target == a.mousePane {
+			a.updateSelection(kind, target, lx, ly)
+			if kind == mouseRelease && cur == 0 {
+				a.mousePane = nil
+				a.selecting = false
+			}
+			return
+		}
+		if kind == mouseHover {
+			btn = 0
+		}
+		target.SendMouse(newMouseEvent(kind, lx, ly, toVTButton(btn), toVTMod(ev.Modifiers())))
+	}
+	if kind == mouseRelease && cur == 0 {
+		a.mousePane = nil
+	}
+}
+
+func (a *app) updateSelection(kind mouseKind, p *pane.Pane, lx, ly int) {
+	switch kind {
+	case mousePress:
+		a.sel = &pane.Selection{AX: lx, AY: ly, BX: lx, BY: ly}
+		a.selPane = p
+	case mouseDrag, mouseRelease:
+		if a.sel == nil {
+			return
+		}
+		a.sel.BX, a.sel.BY = lx, ly
+		if kind == mouseRelease {
+			if a.sel.Empty() {
+				a.sel = nil
+				return
+			}
+			var text string
+			p.WithTerm(func(t *vt.Emulator) {
+				text = a.sel.Text(t, p.ScrollOffset(), t.Width())
+			})
+			if text != "" {
+				os.Stdout.WriteString(ansi.SetSystemClipboard(text))
+			}
+		}
+	}
+}
+
+// paneAt returns the item whose rectangle contains (x, y), or nil.
+func paneAt(rects map[layout.Item]layout.Rect, x, y int) layout.Item {
+	for it, r := range rects {
+		if x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H {
+			return it
+		}
+	}
+	return nil
+}
+
 func (a *app) handleKey(ev *tcell.EventKey) {
+	a.sel = nil
 	w := a.sess.Current()
 	if w == nil {
 		return
@@ -284,7 +392,11 @@ func (a *app) draw() {
 	for it, r := range a.rects {
 		p := it.(*pane.Pane)
 		p.Resize(r.W, r.H)
-		cx, cy, vis := drawPane(s, p, r, dimInactive && p != w.Active)
+		var sel *pane.Selection
+		if p == a.selPane {
+			sel = a.sel
+		}
+		cx, cy, vis := drawPane(s, p, r, dimInactive && p != w.Active, sel)
 		if p == w.Active && vis {
 			s.ShowCursor(cx, cy)
 			showCursor = true
@@ -302,12 +414,13 @@ func (a *app) draw() {
 	s.Show()
 }
 
-func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect, dim bool) (cx, cy int, vis bool) {
+func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect, dim bool, sel *pane.Selection) (cx, cy int, vis bool) {
 	p.WithTerm(func(t *vt.Emulator) {
+		off := p.ScrollOffset()
 		tc, tr := t.Width(), t.Height()
 		for y := 0; y < r.H && y < tr; y++ {
 			for x := 0; x < r.W && x < tc; x++ {
-				c := t.CellAt(x, y)
+				c := pane.ViewCell(t, off, x, y)
 				if c == nil {
 					continue
 				}
@@ -323,7 +436,16 @@ func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect, dim bool) (cx, cy int
 		}
 		pos := t.CursorPosition()
 		cx, cy = r.X+pos.X, r.Y+pos.Y
-		vis = !t.CursorHidden() && pos.X < r.W && pos.Y < r.H
+		vis = off == 0 && !t.CursorHidden() && pos.X < r.W && pos.Y < r.H
+		if off > 0 {
+			badge := []rune(fmt.Sprintf(" ↑ %d ", off))
+			bx := r.X + r.W - len(badge)
+			for i, ch := range badge {
+				if bx+i >= r.X {
+					s.SetContent(bx+i, r.Y, ch, nil, styleScrollBadge)
+				}
+			}
+		}
 	})
 	return cx, cy, vis
 }
@@ -424,7 +546,7 @@ func (a *app) drawHelp(y, cols int) {
 	items := [][2]string{
 		{"n", "new"}, {"c", "close"}, {"r", "rename"}, {"v", "split |"}, {"h", "split -"},
 		{"Ctrl+Shift+←↑→↓", "focus"}, {"prefix+Shift+←↑→↓", "move"}, {"prefix+Ctrl+←↑→↓", "resize"},
-		{"Tab/0-9", "window"}, {"d", "quit"},
+		{"Tab/0-9", "window"}, {"Wheel", "scroll"}, {"Drag", "select+copy"}, {"d", "quit"},
 	}
 	for i, it := range items {
 		if i > 0 {

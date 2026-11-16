@@ -28,6 +28,8 @@ var (
 	styleSparkCPU = tcell.StyleDefault.Background(colCharcoal).Foreground(colFuchsia)
 	styleSparkMem = tcell.StyleDefault.Background(colCharcoal).Foreground(colJulep)
 
+	styleScrollBadge = tcell.StyleDefault.Background(colCharple).Foreground(colCream).Bold(true)
+
 	styleBorder       = tcell.StyleDefault.Foreground(colOyster)
 	styleBorderActive = tcell.StyleDefault.Foreground(colCharple).Bold(true)
 )
