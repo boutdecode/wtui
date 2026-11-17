@@ -3,6 +3,7 @@ package pane
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -187,5 +188,10 @@ func (p *Pane) Close() {
 		p.cmd.Process.Kill()
 	}
 	go p.cmd.Wait()
-	p.term.Close() // unblocks the response goroutine
+	// Unblock the response goroutine by closing the emulator's input pipe
+	// directly: vt.Emulator.Close() writes an unsynchronised `closed` flag
+	// that Emulator.Read() reads concurrently (data race under -race).
+	if pw, ok := p.term.InputPipe().(*io.PipeWriter); ok {
+		pw.CloseWithError(io.EOF)
+	}
 }

@@ -85,7 +85,8 @@ func TestWheelSendsArrowsOnAltScreen(t *testing.T) {
 	p := start(t, 30, 5, `printf '\033[?1049h'; cat -v`)
 	time.Sleep(300 * time.Millisecond)
 	p.Wheel(0, 0, false)
-	s := waitFor(t, p, 0, "^[[B")
+	// Wait for all arrows: the first one can show up before the others.
+	s := waitFor(t, p, 0, strings.Repeat("^[[B", WheelStep))
 	if strings.Count(s, "^[[B") != WheelStep {
 		t.Fatalf("want %d arrows:\n%s", WheelStep, s)
 	}
