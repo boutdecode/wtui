@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/x/ansi"
@@ -165,11 +167,21 @@ func (p *Pane) Cwd() string {
 	if p.cmd == nil || p.cmd.Process == nil {
 		return ""
 	}
-	d, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", p.cmd.Process.Pid))
+	pid := p.cmd.Process.Pid
+	if d, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil {
+		return d
+	}
+	// No procfs (macOS): ask lsof for the cwd file descriptor.
+	out, err := exec.Command("lsof", "-a", "-d", "cwd", "-p", strconv.Itoa(pid), "-Fn").Output()
 	if err != nil {
 		return ""
 	}
-	return d
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "n") {
+			return line[1:]
+		}
+	}
+	return ""
 }
 
 func (p *Pane) Close() {
