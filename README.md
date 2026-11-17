@@ -3,6 +3,8 @@
 A small terminal multiplexer with a tmux-like workflow: windows, split panes, mouse support,
 scrollback, text selection and live CPU/RAM graphs. Written in Go.
 
+![wtui screenshot](docs/screenshot.png)
+
 The interface is available in **English** and **French**.
 
 ## Features
