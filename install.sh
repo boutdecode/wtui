@@ -30,7 +30,7 @@ main() {
 
   base="https://github.com/$repo/releases/download/$version"
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  trap "rm -rf '$tmp'" EXIT
 
   local asset="wtui_${os}_${arch}.tar.gz"
   echo "Downloading wtui $version ($os/$arch)..."
