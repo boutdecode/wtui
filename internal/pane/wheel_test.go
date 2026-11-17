@@ -11,7 +11,7 @@ import (
 // start runs script in a pane and returns it once ready() is true.
 func start(t *testing.T, cols, rows int, script string) *Pane {
 	t.Helper()
-	p, err := New([]string{"sh", "-c", script}, cols, rows, func() {}, func(*Pane) {})
+	p, err := New([]string{"sh", "-c", script}, "", cols, rows, func() {}, func(*Pane) {})
 	if err != nil {
 		t.Fatal(err)
 	}

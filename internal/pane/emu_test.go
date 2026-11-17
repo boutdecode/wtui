@@ -1,6 +1,7 @@
 package pane
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 func run(t *testing.T, cols, rows int, script string) []string {
 	t.Helper()
 	done := make(chan struct{})
-	p, err := New([]string{"sh", "-c", script}, cols, rows, func() {}, func(*Pane) { close(done) })
+	p, err := New([]string{"sh", "-c", script}, "", cols, rows, func() {}, func(*Pane) { close(done) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +76,7 @@ func TestInsertDeleteLines(t *testing.T) {
 
 func TestResizeKeepsContent(t *testing.T) {
 	var gotCols int
-	p, err := New([]string{"sh", "-c", "sleep 2"}, 80, 24, func() {}, func(*Pane) {})
+	p, err := New([]string{"sh", "-c", "sleep 2"}, "", 80, 24, func() {}, func(*Pane) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,5 +85,19 @@ func TestResizeKeepsContent(t *testing.T) {
 	p.WithTerm(func(e *vt.Emulator) { gotCols = e.Width() })
 	if gotCols != 30 {
 		t.Fatalf("width = %d", gotCols)
+	}
+}
+
+func TestNewHonoursDir(t *testing.T) {
+	dir := t.TempDir()
+	p, err := New([]string{"sh", "-c", "sleep 2"}, dir, 80, 24, func() {}, func(*Pane) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	got, _ := filepath.EvalSymlinks(p.Cwd())
+	want, _ := filepath.EvalSymlinks(dir)
+	if got != want {
+		t.Fatalf("Cwd() = %q, want %q", got, want)
 	}
 }

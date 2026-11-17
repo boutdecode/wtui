@@ -2,6 +2,7 @@
 package pane
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"sync"
@@ -35,10 +36,11 @@ type Pane struct {
 	rec        *os.File // raw PTY output, when WTUI_RECORD is set
 }
 
-// New starts command (argv); an empty command starts the user's shell.
+// New starts command (argv) in dir (empty = wtui's own directory); an empty
+// command starts the user's shell.
 // onOutput is called (from another goroutine) whenever the screen changed;
 // onExit when the process terminated.
-func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) (*Pane, error) {
+func New(command []string, dir string, cols, rows int, onOutput func(), onExit func(*Pane)) (*Pane, error) {
 	if len(command) == 0 {
 		shell := os.Getenv("SHELL")
 		if shell == "" {
@@ -47,6 +49,7 @@ func New(command []string, cols, rows int, onOutput func(), onExit func(*Pane)) 
 		command = []string{shell}
 	}
 	cmd := exec.Command(command[0], command[1:]...)
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)})
 	if err != nil {
@@ -155,6 +158,19 @@ func (p *Pane) Resize(cols, rows int) {
 }
 
 // Close kills the process and releases the PTY. Safe to call twice.
+// Cwd returns the current working directory of the pane's process, or "" if
+// it cannot be determined.
+func (p *Pane) Cwd() string {
+	if p.cmd == nil || p.cmd.Process == nil {
+		return ""
+	}
+	d, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", p.cmd.Process.Pid))
+	if err != nil {
+		return ""
+	}
+	return d
+}
+
 func (p *Pane) Close() {
 	p.mu.Lock()
 	if p.closed {

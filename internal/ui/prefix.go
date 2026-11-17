@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"window-tui/internal/i18n"
 
 	"github.com/gdamore/tcell/v2"
 )
@@ -27,9 +28,9 @@ func parsePrefix(spec string) (tcell.Key, error) {
 		k := tcell.Key(s[0]-'a') + tcell.KeyCtrlA
 		switch k {
 		case tcell.KeyTab, tcell.KeyEnter, tcell.KeyBackspace, tcell.KeyCtrlJ:
-			return 0, fmt.Errorf("prefix %q conflicts with Tab/Enter/Backspace", spec)
+			return 0, fmt.Errorf("%s", i18n.T("err.prefix_conflict", spec))
 		}
 		return k, nil
 	}
-	return 0, fmt.Errorf("invalid prefix %q (try ctrl-a, ctrl-space, ctrl-\\)", spec)
+	return 0, fmt.Errorf("%s", i18n.T("err.prefix_invalid", spec))
 }

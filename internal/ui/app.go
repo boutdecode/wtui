@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"window-tui/internal/i18n"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
@@ -26,6 +27,7 @@ type app struct {
 	prefix     bool
 	prefixKey  tcell.Key
 	prefixName string
+	cwd        string   // directory of the first pane; empty = wtui's own
 	command    []string // program started in every new pane; empty = $SHELL
 	stats      *sysstat.Stats
 	borders    bool
@@ -47,6 +49,7 @@ type Options struct {
 	Prefix  string   // prefix key, e.g. "ctrl-a"
 	Borders bool     // draw separator lines between panes (otherwise panes touch)
 	Command []string // program started in every pane; empty = $SHELL
+	Cwd     string   // directory of the first pane; later panes inherit the active pane's
 }
 
 func Run(opt Options) error {
@@ -70,6 +73,7 @@ func Run(opt Options) error {
 		prefixKey:  key,
 		prefixName: prefixSpec,
 		command:    command,
+		cwd:        opt.Cwd,
 		borders:    opt.Borders,
 		sess:       &window.Session{},
 		redraw:     make(chan struct{}, 1),
@@ -123,7 +127,13 @@ func Run(opt Options) error {
 }
 
 func (a *app) newPane() (*pane.Pane, error) {
-	return pane.New(a.command, 80, 24,
+	dir := a.cwd
+	if w := a.sess.Current(); w != nil && w.Active != nil {
+		if d := w.Active.Cwd(); d != "" {
+			dir = d
+		}
+	}
+	return pane.New(a.command, dir, 80, 24,
 		func() {
 			select {
 			case a.redraw <- struct{}{}:
@@ -511,7 +521,7 @@ func (a *app) drawStatus(y, cols int) {
 	}
 	if a.prefix {
 		put(" ", styleBar)
-		put(" PREFIX ", stylePrefix)
+		put(i18n.T("bar.prefix"), stylePrefix)
 	}
 }
 
@@ -544,9 +554,12 @@ func (a *app) drawHelp(y, cols int) {
 	}
 	put(" "+a.prefixName+" ", stylePrefix)
 	items := [][2]string{
-		{"n", "new"}, {"c", "close"}, {"r", "rename"}, {"v", "split |"}, {"h", "split -"},
-		{"Ctrl+Shift+←↑→↓", "focus"}, {"prefix+Shift+←↑→↓", "move"}, {"prefix+Ctrl+←↑→↓", "resize"},
-		{"Tab/0-9", "window"}, {"Wheel", "scroll"}, {"Drag", "select+copy"}, {"d", "quit"},
+		{"n", i18n.T("help.new")}, {"c", i18n.T("help.close")}, {"r", i18n.T("help.rename")},
+		{"v", i18n.T("help.split_v")}, {"h", i18n.T("help.split_h")},
+		{"Ctrl+Shift+←↑→↓", i18n.T("help.focus")}, {"prefix+Shift+←↑→↓", i18n.T("help.move")},
+		{"prefix+Ctrl+←↑→↓", i18n.T("help.resize")}, {"Tab/0-9", i18n.T("help.window")},
+		{i18n.T("key.wheel"), i18n.T("help.scroll")}, {i18n.T("key.drag"), i18n.T("help.select")},
+		{"d", i18n.T("help.quit")},
 	}
 	for i, it := range items {
 		if i > 0 {
@@ -591,11 +604,11 @@ func (a *app) drawRename(y, cols int) {
 			x++
 		}
 	}
-	put(" RENAME ", stylePrefix)
+	put(i18n.T("bar.rename"), stylePrefix)
 	put(" ", styleHelpBar)
 	put(string(a.renameBuf), styleHelpKey)
 	a.screen.ShowCursor(x, y)
-	put("   Enter=ok  Esc=cancel  empty=auto title", styleHelpSep)
+	put(i18n.T("bar.rename_hint"), styleHelpSep)
 }
 
 const (
