@@ -13,6 +13,7 @@ The interface is available in **English** and **French**.
 - Prefix-key driven (default `Ctrl+A`), plus direct focus switching with `Ctrl+Shift+arrows`
 - Mouse: click to focus, wheel to scroll, drag to select and copy
 - Optional separator lines between panes (`--borders`)
+- The terminal window title follows the active pane, as `title - wtui` (restored on exit where supported)
 - CPU / RAM sparklines in the status bar (Linux only, hidden on narrow terminals)
 - Interface language auto-detected from the environment, or set with `--lang`
 
