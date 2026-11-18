@@ -74,7 +74,10 @@ Press the prefix key, then:
 
 Without the prefix: `Ctrl+Shift+arrows` moves focus between panes.
 
-Mouse: click focuses a pane, the wheel scrolls the history, dragging selects and copies text.
+Mouse: click focuses a pane, the wheel scrolls the history, dragging selects and copies text to the system clipboard.
+Programs that track the mouse (vim, htop, ...) receive the drag themselves; hold `Alt` (or `Shift`, or `Ctrl+Shift`) while dragging to select instead.
+
+Copying uses `wl-copy` (Wayland) or `xclip` / `xsel` (X11) when installed, and falls back to OSC 52 (supported by most modern terminals, also inside tmux). Only the clipboard is written, not the primary selection. On X11, install one of them, e.g. `sudo apt install xclip`.
 
 ## Platform notes
 

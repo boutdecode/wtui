@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"window-tui/internal/i18n"
 
 	"github.com/charmbracelet/x/ansi"
@@ -36,6 +37,8 @@ type app struct {
 	sel        *pane.Selection  // text selection, in selPane view coordinates
 	selPane    *pane.Pane
 	selecting  bool // a left-drag selection is in progress
+	clip       *clipboard
+	notice     string // transient message shown in the status bar
 	renaming   bool
 	renameBuf  []rune
 	quit       bool
@@ -76,6 +79,7 @@ func Run(opt Options) error {
 		cwd:        opt.Cwd,
 		borders:    opt.Borders,
 		sess:       &window.Session{},
+		clip:       newClipboard(),
 		redraw:     make(chan struct{}, 1),
 		exited:     make(chan *pane.Pane, 16),
 	}
@@ -181,7 +185,7 @@ func (a *app) handleEvent(ev tcell.Event) {
 func (a *app) handleMouse(ev *tcell.EventMouse) {
 	x, y := ev.Position()
 	if b := ev.Buttons(); b&(tcell.WheelUp|tcell.WheelDown) != 0 {
-		a.sel = nil
+		a.sel, a.notice = nil, ""
 		if it := paneAt(a.rects, x, y); it != nil {
 			r := a.rects[it]
 			it.(*pane.Pane).Wheel(x-r.X, y-r.Y, b&tcell.WheelUp != 0)
@@ -207,11 +211,10 @@ func (a *app) handleMouse(ev *tcell.EventMouse) {
 	}
 	if kind == mousePress {
 		a.mousePane = target
-		a.sel, a.selecting = nil, false
+		a.sel, a.selecting, a.notice = nil, false, ""
 		if btn == tcell.Button1 && target != nil {
 			w.Active = target
-			// Select text unless the program tracks the mouse (Shift forces it).
-			a.selecting = !target.MouseTracking() || ev.Modifiers()&tcell.ModShift != 0
+			a.selecting = shouldSelect(target.MouseTracking(), ev.Modifiers())
 		}
 	}
 	if target == nil {
@@ -257,10 +260,21 @@ func (a *app) updateSelection(kind mouseKind, p *pane.Pane, lx, ly int) {
 				text = a.sel.Text(t, p.ScrollOffset(), t.Width())
 			})
 			if text != "" {
-				os.Stdout.WriteString(ansi.SetSystemClipboard(text))
+				a.clip.Copy(text)
+				a.notice = i18n.T("bar.copied", utf8.RuneCountInString(text))
 			}
 		}
 	}
+}
+
+// shouldSelect reports whether a left press starts a text selection: always
+// when the program does not track the mouse; otherwise only with Shift, Alt
+// or Ctrl+Shift held (many terminals reserve Shift for their own selection).
+func shouldSelect(tracking bool, mod tcell.ModMask) bool {
+	if !tracking {
+		return true
+	}
+	return mod&(tcell.ModShift|tcell.ModAlt) != 0
 }
 
 // paneAt returns the item whose rectangle contains (x, y), or nil.
@@ -274,7 +288,7 @@ func paneAt(rects map[layout.Item]layout.Rect, x, y int) layout.Item {
 }
 
 func (a *app) handleKey(ev *tcell.EventKey) {
-	a.sel = nil
+	a.sel, a.notice = nil, ""
 	w := a.sess.Current()
 	if w == nil {
 		return
@@ -522,6 +536,10 @@ func (a *app) drawStatus(y, cols int) {
 	if a.prefix {
 		put(" ", styleBar)
 		put(i18n.T("bar.prefix"), stylePrefix)
+	}
+	if a.notice != "" {
+		put(" ", styleBar)
+		put(a.notice, styleBar)
 	}
 }
 
