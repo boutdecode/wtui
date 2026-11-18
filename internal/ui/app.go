@@ -41,6 +41,8 @@ type app struct {
 	quit       bool
 	rects      map[layout.Item]layout.Rect
 	seps       []layout.Rect
+	lastTitle  string       // last host window title emitted
+	setTitle   func(string) // overrides the host title writer (tests)
 }
 
 // Run starts the multiplexer; prefixSpec is e.g. "ctrl-a".
@@ -65,6 +67,9 @@ func Run(opt Options) error {
 	if err := s.Init(); err != nil {
 		return err
 	}
+	// Save the host title now; restore it after tcell has finished.
+	writeHost("\x1b[22;0t")
+	defer writeHost("\x1b[23;0t")
 	defer s.Fini()
 	s.EnableMouse()
 
@@ -421,6 +426,7 @@ func (a *app) draw() {
 	} else {
 		a.drawHelp(rows-1, cols)
 	}
+	a.syncTitle(w)
 	s.Show()
 }
 
@@ -525,15 +531,7 @@ func (a *app) drawStatus(y, cols int) {
 	}
 }
 
-func title(w *window.Window) string {
-	if w.Active.Name != "" {
-		return w.Active.Name
-	}
-	if t := w.Active.Title(); t != "" {
-		return t
-	}
-	return "sh"
-}
+func title(w *window.Window) string { return paneTitle(w.Active) }
 
 func (a *app) drawHelp(y, cols int) {
 	for x := 0; x < cols; x++ {
