@@ -256,13 +256,14 @@ func (a *app) updateSelection(kind mouseKind, p *pane.Pane, lx, ly int) {
 		}
 		a.sel.BX, a.sel.BY = lx, ly
 		if kind == mouseRelease {
-			if a.sel.Empty() {
-				a.sel = nil
+			sel := a.sel
+			a.sel, a.selPane = nil, nil // highlight disappears once copied
+			if sel.Empty() {
 				return
 			}
 			var text string
 			p.WithTerm(func(t *vt.Emulator) {
-				text = a.sel.Text(t, p.ScrollOffset(), t.Width())
+				text = sel.Text(t, p.ScrollOffset(), t.Width())
 			})
 			if text != "" {
 				a.clip.Copy(text)
@@ -451,7 +452,11 @@ func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect, dim bool, sel *pane.S
 		for y := 0; y < r.H && y < tr; y++ {
 			for x := 0; x < r.W && x < tc; x++ {
 				c := pane.ViewCell(t, off, x, y)
+				selected := sel != nil && !sel.Empty() && sel.Contains(x, y)
 				if c == nil {
+					if selected {
+						s.SetContent(r.X+x, r.Y+y, ' ', nil, styleSelection)
+					}
 					continue
 				}
 				if c.Width == 0 && c.Content == "" {
@@ -461,7 +466,11 @@ func drawPane(s tcell.Screen, p *pane.Pane, r layout.Rect, dim bool, sel *pane.S
 				if len(rs) == 0 || (c.Width == 2 && x+1 >= r.W) {
 					rs = []rune{' '}
 				}
-				s.SetContent(r.X+x, r.Y+y, rs[0], rs[1:], cellStyle(c.Style.Fg, c.Style.Bg, c.Style.Attrs, c.Style.Underline != 0, dim))
+				st := cellStyle(c.Style.Fg, c.Style.Bg, c.Style.Attrs, c.Style.Underline != 0, dim)
+				if selected {
+					st = selectionStyle(st)
+				}
+				s.SetContent(r.X+x, r.Y+y, rs[0], rs[1:], st)
 			}
 		}
 		pos := t.CursorPosition()
