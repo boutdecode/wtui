@@ -30,6 +30,15 @@ var (
 
 	styleScrollBadge = tcell.StyleDefault.Background(colCharple).Foreground(colCream).Bold(true)
 
+	styleSelection = tcell.StyleDefault.Background(colCharple).Foreground(colCream)
+
 	styleBorder       = tcell.StyleDefault.Foreground(colOyster)
 	styleBorderActive = tcell.StyleDefault.Foreground(colCharple).Bold(true)
 )
+
+// selectionStyle returns base recolored as a selected cell: purple background,
+// light text. Bold, italic and underline are kept; reverse and dim are dropped
+// so the highlight is never inverted twice.
+func selectionStyle(base tcell.Style) tcell.Style {
+	return base.Reverse(false).Dim(false).Foreground(colCream).Background(colCharple)
+}
