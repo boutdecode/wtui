@@ -21,6 +21,8 @@ import (
 )
 
 type app struct {
+	pasting    bool   // between the start and end of a bracketed paste
+	pasteBuf   []byte // input accumulated during a paste
 	screen     tcell.Screen
 	sess       *window.Session
 	redraw     chan struct{}
@@ -75,6 +77,7 @@ func Run(opt Options) error {
 	defer writeHost("\x1b[23;0t")
 	defer s.Fini()
 	s.EnableMouse()
+	s.EnablePaste()
 
 	a := &app{
 		screen:     s,
@@ -118,6 +121,19 @@ func Run(opt Options) error {
 				return nil
 			}
 			a.handleEvent(ev)
+			// Process whatever is already queued before redrawing once.
+		drain:
+			for !a.quit {
+				select {
+				case ev, ok := <-events:
+					if !ok {
+						return nil
+					}
+					a.handleEvent(ev)
+				default:
+					break drain
+				}
+			}
 		case <-a.redraw:
 		case p := <-a.exited:
 			a.sess.ClosePane(p)
@@ -176,10 +192,32 @@ func (a *app) handleEvent(ev tcell.Event) {
 	switch ev := ev.(type) {
 	case *tcell.EventResize:
 		a.screen.Sync()
+	case *tcell.EventPaste:
+		a.handlePaste(ev)
 	case *tcell.EventKey:
+		if a.pasting {
+			a.pasteBuf = append(a.pasteBuf, encodeKey(ev)...)
+			return
+		}
 		a.handleKey(ev)
 	case *tcell.EventMouse:
 		a.handleMouse(ev)
+	}
+}
+
+// handlePaste buffers the keys of a bracketed paste and sends them to the
+// active pane in one write when the paste ends.
+func (a *app) handlePaste(ev *tcell.EventPaste) {
+	if ev.Start() {
+		a.pasting, a.pasteBuf = true, a.pasteBuf[:0]
+		return
+	}
+	a.pasting = false
+	buf := a.pasteBuf
+	a.pasteBuf = nil
+	a.sel, a.notice = nil, ""
+	if w := a.sess.Current(); w != nil && w.Active != nil && !a.renaming {
+		w.Active.Paste(buf)
 	}
 }
 

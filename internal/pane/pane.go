@@ -30,6 +30,8 @@ type Pane struct {
 	title string
 	// mouse holds the mouse-tracking modes the program enabled.
 	mouse map[ansi.Mode]bool
+	// bracketedPaste is set while the program has enabled bracketed paste (?2004).
+	bracketedPaste bool
 	// scroll is how many lines the view is scrolled back into the history.
 	scroll int
 
@@ -73,8 +75,16 @@ func New(command []string, dir string, cols, rows int, onOutput func(), onExit f
 			if isMouseMode(m) {
 				p.mouse[m] = true
 			}
+			if m == ansi.ModeBracketedPaste {
+				p.bracketedPaste = true
+			}
 		},
-		DisableMode: func(m ansi.Mode) { delete(p.mouse, m) },
+		DisableMode: func(m ansi.Mode) {
+			delete(p.mouse, m)
+			if m == ansi.ModeBracketedPaste {
+				p.bracketedPaste = false
+			}
+		},
 	})
 	if path := os.Getenv("WTUI_RECORD"); path != "" {
 		p.rec, _ = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -125,6 +135,25 @@ func (p *Pane) Write(b []byte) {
 		p.emuMu.Unlock()
 		p.ptmx.Write(b)
 	}
+}
+
+// Paste sends pasted text to the program in a single write, wrapped in the
+// bracketed-paste markers when the program asked for them.
+func (p *Pane) Paste(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	p.emuMu.Lock()
+	bracketed := p.bracketedPaste
+	p.emuMu.Unlock()
+	if bracketed {
+		out := make([]byte, 0, len(b)+12)
+		out = append(out, "\x1b[200~"...)
+		out = append(out, b...)
+		out = append(out, "\x1b[201~"...)
+		b = out
+	}
+	p.Write(b)
 }
 
 // WithTerm runs f with exclusive access to the emulator.
