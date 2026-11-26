@@ -7,6 +7,7 @@ import (
 )
 
 type Window struct {
+	Name   string // optional tab name, shown before the active pane title
 	Root   *layout.Node
 	Active *pane.Pane
 }

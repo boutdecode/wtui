@@ -42,6 +42,7 @@ type app struct {
 	clip       *clipboard
 	notice     string // transient message shown in the status bar
 	renaming   bool
+	renameTab  bool // renaming the tab instead of the active pane
 	renameBuf  []rune
 	quit       bool
 	rects      map[layout.Item]layout.Rect
@@ -379,8 +380,11 @@ func (a *app) handleKey(ev *tcell.EventKey) {
 		case r == 'c':
 			a.sess.ClosePane(w.Active)
 		case r == 'r':
-			a.renaming = true
+			a.renaming, a.renameTab = true, false
 			a.renameBuf = []rune(w.Active.Name)
+		case r == 'R':
+			a.renaming, a.renameTab = true, true
+			a.renameBuf = []rune(w.Name)
 		case r == 'v':
 			a.split(true)
 		case r == 'h':
@@ -596,7 +600,12 @@ func (a *app) drawStatus(y, cols int) {
 	}
 }
 
-func title(w *window.Window) string { return paneTitle(w.Active) }
+func title(w *window.Window) string {
+	if w.Name != "" {
+		return w.Name + " - " + paneTitle(w.Active)
+	}
+	return paneTitle(w.Active)
+}
 
 func (a *app) drawHelp(y, cols int) {
 	for x := 0; x < cols; x++ {
@@ -617,7 +626,7 @@ func (a *app) drawHelp(y, cols int) {
 	}
 	put(" "+a.prefixName+" ", stylePrefix)
 	items := [][2]string{
-		{"n", i18n.T("help.new")}, {"c", i18n.T("help.close")}, {"r", i18n.T("help.rename")},
+		{"n", i18n.T("help.new")}, {"c", i18n.T("help.close")}, {"r", i18n.T("help.rename")}, {"R", i18n.T("help.rename_tab")},
 		{"v", i18n.T("help.split_v")}, {"h", i18n.T("help.split_h")},
 		{"Ctrl+Shift+←↑→↓", i18n.T("help.focus")}, {"prefix+Shift+←↑→↓", i18n.T("help.move")},
 		{"prefix+Ctrl+←↑→↓", i18n.T("help.resize")}, {"Tab/0-9", i18n.T("help.window")},
@@ -637,7 +646,12 @@ func (a *app) drawHelp(y, cols int) {
 func (a *app) handleRenameKey(ev *tcell.EventKey, w *window.Window) {
 	switch ev.Key() {
 	case tcell.KeyEnter:
-		w.Active.Name = strings.TrimSpace(string(a.renameBuf))
+		name := strings.TrimSpace(string(a.renameBuf))
+		if a.renameTab {
+			w.Name = name
+		} else {
+			w.Active.Name = name
+		}
 		a.renaming = false
 	case tcell.KeyEsc, tcell.KeyCtrlC:
 		a.renaming = false
@@ -667,7 +681,11 @@ func (a *app) drawRename(y, cols int) {
 			x++
 		}
 	}
-	put(i18n.T("bar.rename"), stylePrefix)
+	if a.renameTab {
+		put(i18n.T("bar.rename_tab"), stylePrefix)
+	} else {
+		put(i18n.T("bar.rename"), stylePrefix)
+	}
 	put(" ", styleHelpBar)
 	put(string(a.renameBuf), styleHelpKey)
 	a.screen.ShowCursor(x, y)

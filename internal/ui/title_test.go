@@ -84,3 +84,16 @@ func TestSyncTitle(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestTabTitle(t *testing.T) {
+	p := newPane(t, "sleep 5")
+	p.Name = "pane"
+	w := &window.Window{Active: p}
+	if got := title(w); got != "pane" {
+		t.Fatalf("no tab name: got %q", got)
+	}
+	w.Name = "tab"
+	if got := title(w); got != "tab - pane" {
+		t.Fatalf("with tab name: got %q", got)
+	}
+}
