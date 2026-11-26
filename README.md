@@ -66,7 +66,8 @@ Press the prefix key, then:
 |-----------------------------|------------------------------------------|
 | `n`                         | New window                               |
 | `c`                         | Close the active pane                    |
-| `r`                         | Rename the window                        |
+| `r`                         | Rename the active pane                   |
+| `R`                         | Rename the window (shown as `window - pane`) |
 | `v` / `h`                   | Split vertically (`\|`) / horizontally (`-`) |
 | `Shift+arrows`              | Swap the active pane with its neighbour  |
 | `Ctrl+arrows`               | Resize the active pane                   |
